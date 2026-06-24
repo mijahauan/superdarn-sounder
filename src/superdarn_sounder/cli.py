@@ -86,6 +86,12 @@ def main():
                         help="Emit JSON instead of human-readable output")
     p_scan.add_argument("--synthetic", action="store_true",
                         help="Use the synthetic source (no radiod needed)")
+    p_scan.add_argument("--track", metavar="RADAR", default=None,
+                        help="Follow a radar's live operating frequency from the "
+                             "VT real-time feed (e.g. --track bks), re-tuning as "
+                             "it hops. Needs the 'track' extra.")
+    p_scan.add_argument("--dwell", type=float, default=120.0,
+                        help="With --track: total dwell seconds (default 120)")
     _common(p_scan)
 
     p_cfg = sub.add_parser("config", help="Configure superdarn-sounder")
@@ -218,6 +224,11 @@ def _handle_detect_scan(args):
     config_path = _resolved_config_path(args)
     config = load_config(config_path)
     block = resolve_radiod_block(config, args.radiod_id)
+
+    if getattr(args, "track", None):
+        _handle_track(args, config, block)
+        return
+
     chans = bands(block)
     if not chans:
         sys.stderr.write("no [[radiod.band]] configured\n")
@@ -257,6 +268,105 @@ def _handle_detect_scan(args):
               f"snr={r['snr_db']:.1f} dB  seq={seq.get('sequence_name','?')} "
               f"τ={seq.get('tau_us_est','?')}µs score={seq.get('score','?')} "
               f"radar≈{r.get('candidate_radar','?')} beam≈{r.get('beam_index_est','?')}")
+
+
+def _handle_track(args, config, block):
+    """Follow a radar's live VT frequency, re-tuning the scan as it hops."""
+    import time as _time
+    from datetime import datetime, timezone
+
+    from superdarn_sounder.config import bands, load_pulse_tables
+    from superdarn_sounder.core.daemon import process_frame
+    from superdarn_sounder.core.pulse_detect import detect_pulses
+    from superdarn_sounder.core.stream import RadiodIQSource
+    from superdarn_sounder.core.vt_realtime import VTRealtimeClient
+
+    radar = args.track
+    chans = bands(block)
+    sr = float(chans[0]["sample_rate_hz"]) if chans else 150_000.0
+    frame_s = float(config.get("detection", {}).get("frame_seconds", 0.5))
+    det = config.get("detection", {})
+    tables = load_pulse_tables()
+    retune_hz = sr * 0.4               # re-tune when the radar moves out of window
+
+    log = logging.getLogger("superdarn_sounder.track")
+    vt = VTRealtimeClient([radar])
+    try:
+        vt.start()
+    except RuntimeError as exc:
+        sys.stderr.write(f"{exc}\n")
+        sys.exit(2)
+    log.info("VT real-time connected; waiting for %s frequency...", radar)
+    st = vt.wait_for(radar, timeout_s=20.0)
+    if st is None:
+        sys.stderr.write(f"no live frequency for {radar!r} from VT "
+                         f"(offline, or wrong abbreviation)\n")
+        vt.stop()
+        sys.exit(3)
+
+    deadline = _time.monotonic() + float(args.dwell)
+    src = None
+    center_hz = 0.0
+    n_frames = 0
+    matches = 0
+    records: list = []
+    try:
+        while _time.monotonic() < deadline:
+            st = vt.current(radar) or st
+            live_hz = st.freq_khz * 1000.0
+            if src is None or abs(live_hz - center_hz) > retune_hz:
+                if src is not None:
+                    src.stop()
+                center_hz = live_hz
+                log.info("tuning %s -> %.3f MHz (beam %s)",
+                         radar, center_hz / 1e6, st.beam)
+                src = RadiodIQSource(
+                    radiod_status_dns=str(block.get("status", "")),
+                    center_freq_hz=center_hz, sample_rate_hz=sr,
+                    frame_seconds=frame_s,
+                    lifetime_frames=int((float(args.dwell) + 30) * 50))
+                it = iter(src)
+            try:
+                frame, utc = next(it)
+            except StopIteration:
+                break
+            n_frames += 1
+            band = {"id": f"{radar}-track", "center_freq_hz": center_hz,
+                    "sample_rate_hz": sr}
+            recs = process_frame(frame, utc, config, block, band=band,
+                                 reporter_id=None, pulse_tables=tables)
+            if recs:
+                matches += len(recs)
+                records.extend(recs)
+                for r in recs:
+                    seq = r["sequence"]
+                    print(f"  {r['timestamp']} {center_hz/1e6:.3f}MHz "
+                          f"MATCH {seq['sequence_name']} tau={seq['tau_us_est']:.0f}us "
+                          f"score={seq['score']:.2f} pulses={r['n_pulses']} "
+                          f"snr={r['snr_db']:.1f}dB beam~{r['beam_index_est']}",
+                          flush=True)
+            else:
+                d = detect_pulses(frame, sr,
+                                  pulse_width_us=float(det.get("pulse_width_us", 300.0)),
+                                  snr_threshold_db=float(det.get("snr_threshold_db", 10.0)))
+                if d:
+                    print(f"  {datetime.now(timezone.utc).isoformat(timespec='seconds')} "
+                          f"{center_hz/1e6:.3f}MHz pulses={len(d)} "
+                          f"maxsnr={max(x.snr_db for x in d):.1f}dB (no sequence)",
+                          flush=True)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if src is not None:
+            src.stop()
+        vt.stop()
+
+    if args.json:
+        print(json.dumps({"radar": radar, "frames": n_frames,
+                          "matches": matches, "records": records}, indent=2))
+    else:
+        print(f"\n=> {radar}: {n_frames} frames, {matches} sequence match(es) "
+              f"over {args.dwell:.0f}s dwell")
 
 
 def _handle_config(args):

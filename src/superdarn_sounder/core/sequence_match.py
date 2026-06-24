@@ -97,6 +97,12 @@ def match_sequence(
     floor of ``tol_floor_us`` (≈ half a pulse width) so very short τ still has a
     usable window.
     """
+    # NOTE (density inflation): with many overlapping sequences in one frame
+    # (tens of pulses) the score can inflate because almost any ptab offset
+    # lands near *some* pulse.  For rigorous mode-ID on busy frames, window to a
+    # single pulse-repetition interval and/or add a purity term (penalise
+    # unexplained pulses).  Clean single-sequence frames (~mppul pulses) are
+    # unaffected.  See docs/OBSERVING.md §6.
     times = np.sort(np.asarray(list(pulse_times_s), dtype=np.float64))
     if times.size < 3:
         return None

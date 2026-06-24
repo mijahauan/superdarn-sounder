@@ -69,16 +69,34 @@ window, and dwell across at least one full 1-minute scan so the beam sweeps
 through the geometry that best couples to us. Lower bands (10–11 MHz) and
 night/terminator hours generally favour the closer paths.
 
-## 5. Status of live attempts (2026-06-24)
+## 5. Tracking mode — `detect-scan --track <radar>`
 
-Validated end-to-end against sigma's RX-888 Mk2: live-frequency read → targeted
-`detect-scan` → pipeline → channel cleanup all work. One **marginal, unconfirmed**
-candidate at Blackstone (8 pulses, partial 7-pulse fit, score 0.57, ~8 dB over
-noise) did **not** reproduce on a 30 s dwell after the radar hopped frequency —
-consistent with a brief side-lobe burst or QRM, not a confirmed detection.
+The fix for the frequency-hop problem is implemented: `detect-scan --track <abbr>`
+(needs the `track` extra) reads the radar's live frequency from the VT feed
+(`core/vt_realtime.py`) and continuously re-tunes the scan to it, dwelling across
+full scans so we are always on-frequency when the beam/geometry favours us.
 
-**Next step to actually confirm:** an auto-tracking mode — poll the VT real-time
-socket for a target radar's frequency and continuously re-tune the scan to it,
-dwelling through full scans — so we're always on-frequency when its beam/geometry
-favours us. That removes the frequency-hop coincidence, which is currently the
-dominant reason blind captures miss.
+```bash
+superdarn-sounder detect-scan --config <cfg> --track fhe --dwell 90
+```
+
+## 6. First light (2026-06-24, ~12:25 UT)
+
+Tracked dwells against sigma's RX-888 Mk2 produced credible detections:
+
+- **Fort Hays East (fhe) @ 11.091 MHz** — a sustained ~5 s burst of *consecutive*
+  frames matching `eight_pulse` (the standard normalscan sequence), τ≈1500 µs,
+  several frames at score **1.00** (all 8 lags), stable beam≈13, bracketed by
+  quiet frames. That contiguous envelope is a SuperDARN beam-dwell sweeping past
+  us — a clean detection.
+- **Blackstone (bks) @ 11.716 MHz** — 42 pulses, `seven_pulse` score 0.86,
+  +10 dB; strong pulsed signal but the score is partly **density-inflated** (see
+  below), so treat the bks mode-ID as provisional.
+
+**Matcher refinement (known):** on dense frames (many overlapping sequences in
+one 0.5 s window, tens of pulses) `match_sequence`'s score can inflate, because
+almost any ptab offset lands near *some* pulse. The clean fhe result came from
+sparse single-sequence frames (e.g. 9 pulses → 8/8). To make mode-ID rigorous on
+busy frames, window the matcher to a single pulse-repetition interval and/or add
+a "purity" term (penalise unexplained pulses). Then cross-check with rawACF
+(`scripts/validate_against_rawacf.py`).
