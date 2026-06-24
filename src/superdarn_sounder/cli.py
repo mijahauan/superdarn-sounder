@@ -337,6 +337,11 @@ def _handle_track(args, config, block):
                                  reporter_id=None, pulse_tables=tables)
             if recs:
                 matches += len(recs)
+                for r in recs:
+                    # In track mode we tuned to THIS radar's live frequency, so
+                    # the source is known — override the nearest-audible guess.
+                    r["candidate_radar"] = radar
+                    r["candidate_via"] = "tracked-frequency"
                 records.extend(recs)
                 for r in recs:
                     seq = r["sequence"]

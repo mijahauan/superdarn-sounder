@@ -100,3 +100,19 @@ sparse single-sequence frames (e.g. 9 pulses → 8/8). To make mode-ID rigorous 
 busy frames, window the matcher to a single pulse-repetition interval and/or add
 a "purity" term (penalise unexplained pulses). Then cross-check with rawACF
 (`scripts/validate_against_rawacf.py`).
+
+## 7. Phase 2 — propagation products (2026-06-24)
+
+`detect-scan --track <radar>` now emits, at the end of a dwell, the
+path-condition observables built on the shared `hamsci-dsp` library:
+**dTEC + dTEC/dt** (carrier phase across detected pulses), **scintillation**
+(S4 / sigma_phi), and a **propagation window** (per-radar observed
+supported-frequency = a measured lower bound on path MUF). Oblique
+virtual-height/MUF is wired (`core/propagation.oblique_products`) and lights up
+once an absolute group delay is bridged from rawACF.
+
+Validated live on sigma: a tracked Blackstone dwell (11.745 MHz) caught a clean
+beam-dwell burst (eight_pulse, tau=1500 us, score 1.00) and produced
+`dTEC span ~ -0.0013 TECU, |rate|max ~ 0.0024 TECU/s, unwrap_q 1.00`. In track
+mode the source is attributed to the tracked radar (we tuned to its live
+frequency), not the nearest-audible guess.
