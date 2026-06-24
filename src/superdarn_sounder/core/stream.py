@@ -133,6 +133,7 @@ class RadiodIQSource:
         sample_rate_hz: float,
         frame_seconds: float,
         filter_guard_hz: float = 1500.0,
+        lifetime_frames: Optional[int] = None,
         authority_reader=None,
     ):
         self.radiod_status_dns = radiod_status_dns
@@ -140,6 +141,10 @@ class RadiodIQSource:
         self.sample_rate_hz = float(sample_rate_hz)
         self.n_samples = max(1, int(round(frame_seconds * sample_rate_hz)))
         self.filter_guard_hz = float(filter_guard_hz)
+        # Finite lifetime → the channel self-destructs after we stop polling,
+        # so a one-shot scan (or a crash) doesn't leave a stray channel on the
+        # live radiod.  None = persistent (long-running daemon refreshes it).
+        self.lifetime_frames = lifetime_frames
         self._authority = authority_reader
         self._q: "queue.Queue" = queue.Queue(maxsize=64)
         self._control = None
@@ -147,7 +152,8 @@ class RadiodIQSource:
         self._stop = False
         self._anchor_utc: Optional[datetime] = None
 
-    def _on_samples(self, samples) -> None:
+    def _on_samples(self, samples, quality=None) -> None:
+        # ka9q RadiodStream calls back with (samples, quality).
         arr = np.asarray(samples, dtype=np.complex64)
         arr = np.nan_to_num(arr, copy=False)
         try:
@@ -171,6 +177,7 @@ class RadiodIQSource:
             encoding=4,                 # F32LE
             low_edge=float(low),
             high_edge=float(high),
+            lifetime=self.lifetime_frames,
         )
         self._stream = RadiodStream(info, on_samples=self._on_samples)
         self._stream.start()
@@ -220,6 +227,7 @@ def make_iq_source(
     force_synthetic: bool = False,
     synthetic_ptab: Optional[list[int]] = None,
     synthetic_tau_us: float = 2400.0,
+    lifetime_frames: Optional[int] = None,
     authority_reader=None,
 ):
     """Construct a radiod source, or a synthetic one for testing / dev."""
@@ -234,5 +242,6 @@ def make_iq_source(
         center_freq_hz=center_freq_hz,
         sample_rate_hz=sample_rate_hz,
         frame_seconds=frame_seconds,
+        lifetime_frames=lifetime_frames,
         authority_reader=authority_reader,
     )

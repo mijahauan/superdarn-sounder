@@ -231,6 +231,9 @@ def _handle_detect_scan(args):
         sample_rate_hz=float(band["sample_rate_hz"]),
         frame_seconds=float(args.seconds),
         force_synthetic=bool(args.synthetic),
+        # A one-shot scan: give the channel a finite lifetime (~capture + 30 s
+        # margin) so it self-cleans off the live radiod afterward.
+        lifetime_frames=int((float(args.seconds) + 30.0) * 50),
     )
     try:
         frame, utc = next(iter(src))
