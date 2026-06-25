@@ -61,7 +61,7 @@ mkdir -p /opt/git/sigmond
 for sib in hamsci-dsp ka9q-python; do
     if [[ ! -f "/opt/git/sigmond/$sib/pyproject.toml" ]]; then
         ui_info "sibling $sib not present -- cloning"
-        git clone "https://github.com/mijahauan/$sib" "/opt/git/sigmond/$sib" \
+        git clone "https://github.com/HamSCI/$sib" "/opt/git/sigmond/$sib" \
             || { ui_error "Failed to clone $sib"; exit 1; }
     fi
 done
